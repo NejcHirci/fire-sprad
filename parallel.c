@@ -114,26 +114,6 @@ void print_grid(){
     }
 }
 
-// Render grid as png image
-void render_grid(){
-    int pitch = ((32 * W + 31) / 32) * 4;
-
-    for(int y = 0; y < H; y++)
-        for(int x = 0; x < W; x++){
-            int state = grid[y][x];
-            image[4*y*W + 4*x + 0] = colors[state][2];  // Blue
-            image[4*y*W + 4*x + 1] = colors[state][1];  // Green
-			image[4*y*W + 4*x + 2] = colors[state][0];  // Red
-			image[4*y*W + 4*x + 3] = 255;               // Alpha
-        }
-
-    char image_name[16];
-    sprintf(image_name, "%s%d.png", IMAGE_PATH, t);
-
-    FIBITMAP *dst = FreeImage_ConvertFromRawBits(image, W, H, pitch,
-		32, FI_RGBA_RED_MASK, FI_RGBA_GREEN_MASK, FI_RGBA_BLUE_MASK, TRUE);
-	FreeImage_Save(FIF_PNG, dst, image_name, 0);
-}
 
 int main(int argc, char* argv[]){
 
