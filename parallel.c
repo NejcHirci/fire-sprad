@@ -40,25 +40,22 @@ double rnd(){
 }
 
 // Initialize cells (to 1 or 2)
-void init(){
+void init(char* grid){
     for(int y = 0; y < H; y++)
         for(int x = 0; x < W; x++){
-            grid[y][x] = 2;
-            next_grid[y][x] = 2;
+            grid[y*H+x] = rand() % 2;
         }
 }
 
-// Start the fire in some cells
-void spark(){
-    // for(int y = 0; y < H; y++)
-    //     for(int x = 0; x < W; x++)
-    //         if (rnd() < P_ST)
-    //             grid[y][x] = 3;
-
-    int y0 = rand() % H;
-    int x0 = rand() % W;
-    grid[y0][x0] = 3;
-
+// Start the fire in some cells: n - number of sparks
+void spark(char* grid, int n){
+    int numSparks = 0;
+    int y0, x0;
+    while (numSparks < n){
+        y0 = rand() % H;
+        x0 = rand() % W;
+        grid[y0*H+W] = 3;
+    }
 }
 
 // GET STATE OF A CELL AT t+1
@@ -140,14 +137,20 @@ void render_grid(){
 
 int main(int argc, char* argv[]){
 
-    image = (unsigned char *) malloc(H * W * sizeof(unsigned char) * 4);
+    int myid, numOfProc
+    MPI_Status status;
 
-    init();
-    spark();
+    char* globalGrid = (char *)malloc(H * W * sizeof(unsigned char));
 
-    for(t = 0; t < ITER; t++){
-        print_grid();
-        render_grid();
-        update();
-    }
+    // Initialize grid and spark fire in some cells
+    init(globalGrid);
+    spark(globalGrid, 20);
+
+    // ================== MPI ==================
+
+    // Configure MPI paralellization based on input arguments
+    MPI_Init(&argc, &argv);    
+    MPI_Comm_rank(MPI_COMM_WORLD, &myid);
+    MPI_Comm_size(MPI_COMM_WORLD, &numOfProc);
+
 }
