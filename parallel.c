@@ -8,8 +8,8 @@
 #include "FreeImage.h"
 #include "mpi.h"
 
-#define H 200
-#define W 400
+#define H 20
+#define W 40
 #define ITER 100//number of iterations
 #define P_ST 0.01 //prob. of fire starting in a cell at init
 #define P_BD 0.6 //prob. of burning cell burning down
@@ -301,13 +301,15 @@ int main(int argc, char* argv[]){
     loc_w = W;    
     proc_seed = my_id;
     printf("id:%d [%d,%d] | neighb: [%d,%d] | sizes: [%d,%d]\n", my_grid_id, my_grid_coords[0], my_grid_coords[1], my_neigbours[0], my_neigbours[1], loc_h, loc_w);
-    
-    
+
     init(grid, 0.7);
 
     // Spark fire in three processes
     if (my_grid_id == 0)
         spark(grid, 5);
+    
+    printf("id:%d",my_grid_id);
+    print_grid(grid, NULL);
 
     /**
      * Simulation
@@ -321,6 +323,9 @@ int main(int argc, char* argv[]){
     }
 
     MPI_Finalize();
+
+    printf("id:%d",my_grid_id);
+    print_grid(grid, my_neigbours);
 
     double t_end = omp_get_wtime();
     if (my_grid_id == 0)
