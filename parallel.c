@@ -8,8 +8,8 @@
 #include "FreeImage.h"
 #include "mpi.h"
 
-#define H 4000
-#define W 4000
+#define H 200
+#define W 400
 #define ITER 100//number of iterations
 #define P_ST 0.01 //prob. of fire starting in a cell at init
 #define P_BD 0.6 //prob. of burning cell burning down
@@ -288,7 +288,10 @@ int main(int argc, char* argv[]){
         h_size = H - h_size * (num_procs-1);
     }
 
-    printf("id:%d [%d,%d] | neighb: [%d,%d]\n", my_grid_id, my_grid_coords[0], my_grid_coords[1], my_neigbours[0], my_neigbours[1]);
+    if (my_grid_id == 0) {
+        printf("Res:%dx%d | grid: %dx%d\n", H, W, dim_sizes[0], dim_sizes[1]);
+    }
+
     char** grid = alloc_grid(h_size, W, X_EDGE, Y_EDGE);
     char** next_grid = alloc_grid(h_size, W, X_EDGE, Y_EDGE);
     //printf("hsize: %d\n", h_size);
@@ -297,7 +300,8 @@ int main(int argc, char* argv[]){
     loc_h = h_size;
     loc_w = W;    
     proc_seed = my_id;
-
+    printf("id:%d [%d,%d] | neighb: [%d,%d] | sizes: [%d,%d]\n", my_grid_id, my_grid_coords[0], my_grid_coords[1], my_neigbours[0], my_neigbours[1], loc_h, loc_w);
+    
     
     init(grid, 0.7);
 
