@@ -16,7 +16,7 @@
 #define P_H 0.58 //constant spreading prob.
 #define IMAGE_PATH "./temp/" //image sequence is stored here
 
-#define H_LEN 4 //width of the horizontal "edge" of neighbouring cells to exhange
+#define H_LEN 1 //width of the horizontal "edge" of neighbouring cells to exhange
 #define V_LEN 0 //width of the vertical edge (has to be 0 or same as X_edge)
 
 //int grid[H][W];
@@ -191,7 +191,7 @@ void update_send(char** grid, char** next_grid, int* target_cells, MPI_Comm grid
     }
     // Check for bot neigbour
     if (0 <= target_cells[1]) {
-        get_rows(grid, out_buf_bot, loc_h-1);
+        get_rows(grid, out_buf_bot, loc_h-H_LEN);
         MPI_Isend(out_buf_bot, loc_w, MPI_CHAR, target_cells[1], my_id, grid_comm, &send_down);
         MPI_Irecv(in_buf_bot, loc_w, MPI_CHAR, target_cells[1], target_cells[1], grid_comm, &recv_down);
     }
