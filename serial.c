@@ -7,9 +7,9 @@
 //#include "omp.h"
 //#include "mpi.h"
 
-#define H 64
-#define W 64
-#define ITER 64 //number of iterations
+#define H 32
+#define W 32
+#define ITER 16 //number of iterations
 #define P_ST 0.01 //prob. of fire starting in a cell at init
 #define P_BD 0.6 //prob. of burning cell burning down
 #define P_H 0.58 //constant spreading prob.
@@ -22,8 +22,8 @@ int t;
 char symbols[5] = {' ',' ','.','&','*'};
 unsigned char *image;
 int colors[5][3] = {{0,0,0},
-                {80, 80, 80},
-                {10, 40, 15},
+                {80, 90, 85},
+                {10, 60, 20},
                 {255,215,80},
                 {30, 30, 30 }};
 
@@ -40,25 +40,21 @@ double rnd(){
 }
 
 // Initialize cells (to 1 or 2)
-void init(){
+void init(double density){
     for(int y = 0; y < H; y++)
         for(int x = 0; x < W; x++){
-            grid[y][x] = 2;
-            next_grid[y][x] = 2;
+            grid[y][x] = rnd() < density ? 2 : 1;
         }
 }
 
 // Start the fire in some cells
-void spark(){
-    // for(int y = 0; y < H; y++)
-    //     for(int x = 0; x < W; x++)
-    //         if (rnd() < P_ST)
-    //             grid[y][x] = 3;
-
-    int y0 = rand() % H;
-    int x0 = rand() % W;
-    grid[y0][x0] = 3;
-
+void spark(int n){
+    int y0, x0;
+    for(int i = 0; i < n; i++){
+        y0 = rand() % H;
+        x0 = rand() % W ;
+        grid[y0][x0] = 3;
+    }
 }
 
 // GET STATE OF A CELL AT t+1
@@ -84,14 +80,14 @@ int next_state(int y, int x, int t){
 
     }
 
-    return grid[x][y];
+    return grid[y][x];
 }
 
 // Update states for whole grid (one iteration)
 void update(){
     for(int y = 0; y < H; y++)
         for(int x = 0; x < W; x++)
-            next_grid[y][x] = next_state(x,y,t);
+            next_grid[y][x] = next_state(y,x,t);
 
     for(int y = 0; y < H; y++)
         for(int x = 0; x < W; x++)
@@ -124,6 +120,8 @@ void render_grid(){
     char image_name[16];
     sprintf(image_name, "%s%d.png", IMAGE_PATH, t);
 
+    printf("%s\n", image_name);
+
     FIBITMAP *dst = FreeImage_ConvertFromRawBits(image, W, H, pitch,
 		32, FI_RGBA_RED_MASK, FI_RGBA_GREEN_MASK, FI_RGBA_BLUE_MASK, TRUE);
 	FreeImage_Save(FIF_PNG, dst, image_name, 0);
@@ -133,8 +131,8 @@ int main(int argc, char* argv[]){
 
     image = (unsigned char *) malloc(H * W * sizeof(unsigned char) * 4);
 
-    init();
-    spark();
+    init(0.85);
+    spark(5);
 
     for(t = 0; t < ITER; t++){
         print_grid();
