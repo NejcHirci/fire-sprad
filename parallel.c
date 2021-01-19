@@ -10,14 +10,14 @@
 
 #define H 20
 #define W 40
-#define ITER 100//number of iterations
+#define ITER 5//number of iterations
 #define P_ST 0.01 //prob. of fire starting in a cell at init
 #define P_BD 0.6 //prob. of burning cell burning down
 #define P_H 0.58 //constant spreading prob.
 #define IMAGE_PATH "./temp/" //image sequence is stored here
 
-#define X_EDGE 1 //width of the horizontal "edge" of neighbouring cells to exhange
-#define Y_EDGE 0 //width of the vertical edge (has to be 0 or same as X_edge)
+#define H_LEN 4 //width of the horizontal "edge" of neighbouring cells to exhange
+#define V_LEN 0 //width of the vertical edge (has to be 0 or same as X_edge)
 
 //int grid[H][W];
 //int next_grid[H][W];
@@ -45,31 +45,46 @@ double rnd(){
     return (double) rand_r(&proc_seed) / (double) RAND_MAX;
 }
 
-// Store row to out_buf for send
-void get_row(char** grid, char* out_buf, int y) {
-    for (int x = 0; x < loc_w; x++){
-        out_buf[x] = grid[y][x];
+// Store rows to out_buf for send from x to x+H_LEN
+void get_rows(char** grid, char* out_buf, int y) {
+    int count = 0;
+    while (count < H_LEN) {
+        for (int x = 0; x < loc_w; x++){
+            out_buf[count*loc_w + x] = grid[y+count][x];
+        }
+        count++;
     }
 }
 
-// Store col to out_buf for send
-void get_col(char** grid, char* out_buf, int x){
-    for (int y = 0; y < loc_h; y++){
-        out_buf[y] = grid[y][x];
+// Store cols to out_buf for send from y to y+V_LEN
+void get_cols(char** grid, char* out_buf, int x){
+    int count = 0;
+    while (count < V_LEN) {
+        for (int y = 0; y < loc_h; y++){
+            out_buf[count*loc_h + y] = grid[y][x + count];
+        }
     }
 }
 
-// Store row in in_buf to grid
-void set_row(char** grid, char* in_buf, int y) {
-    for (int x = 0; x < loc_w; x++){
-        grid[y][x] = in_buf[x];
+// Store rows in in_buf to grid from x to x+H_LEN
+void set_rows(char** grid, char* in_buf, int y) {
+    int count = 0;
+    while (count < H_LEN) {
+        for (int x = 0; x < loc_w; x++){
+            grid[y+count][x] = in_buf[x];
+        }
+        count++;
     }
 }
 
-// Store col in in_buf to grid
-void set_col(char** grid, char* in_buf, int x) {
-    for (int y = 0; y < loc_h; y++){
-        grid[y][x] = in_buf[y];
+// Store cols in in_buf to grid y to y+V_LEN
+void set_cols(char** grid, char* in_buf, int x) {
+    int count = 0;
+    while (count < V_LEN) {
+        for (int y = 0; y < loc_h; y++){
+            grid[y][x+count] = in_buf[y];
+        }
+        count++;
     }
 } 
 
@@ -104,7 +119,7 @@ int next_state(char** grid, int y, int x){
             for(int j = -1; j <=1; j++){           
                 // fire spreads from each neighbor with some probability
                 double p_spread = P_H; //change to function
-                if (y+i < 0-X_EDGE || y+i > loc_h+X_EDGE || x+j < 0-Y_EDGE || x+j > loc_w+Y_EDGE)
+                if (y+i < 0-H_LEN || y+i > loc_h+H_LEN || x+j < 0-V_LEN || x+j > loc_w+V_LEN)
                     continue;
                 if (grid[y+i][x+j] == 3 && rnd() < p_spread)
                     return 3;
@@ -140,17 +155,18 @@ void print_grid(char** grid, int* target_cells){
 }
 
 // Parallel state update for whole grid with no send
-void update_nosend(char** grid, char** next_grid){ 
+void update_nosend(char** grid, char** next_grid, int exchange){ 
+    int eH = - H_LEN + 1 + exchange;
     #pragma omp parallel
     {
-        #pragma omp for collapse(2) schedule(static)
-        for(int y = 1; y < loc_h-1; y++)
-            for(int x = 1; x < loc_w-1; x++)
+        #pragma omp for collapse(2) schedule(guided)
+        for(int y = eH; y < loc_h-eH; y++)
+            for(int x = 0; x < loc_w; x++)
                 next_grid[y][x] = next_state(grid,y,x);
 
-        #pragma omp for collapse(2) schedule(static)
-        for(int y = 1; y < loc_h-1; y++)
-            for(int x = 1; x < loc_w-1; x++)
+        #pragma omp for collapse(2) schedule(guided)
+        for(int y = eH; y < loc_h-eH; y++)
+            for(int x = 0; x < loc_w; x++)
                 grid[y][x] = next_grid[y][x];
     }
 }
@@ -162,20 +178,20 @@ void update_send(char** grid, char** next_grid, int* target_cells, MPI_Comm grid
     MPI_Status status;
 
     // Prepare to send and receive asynchronous
-    char* out_buf_top = (char*)malloc(loc_w * sizeof(char));
-    char* out_buf_bot = (char*)malloc(loc_w * sizeof(char));
-    char* in_buf_top = (char*)malloc(loc_w * sizeof(char));
-    char* in_buf_bot = (char*)malloc(loc_w * sizeof(char));
+    char* out_buf_top = (char*)malloc(H_LEN * loc_w * sizeof(char));
+    char* out_buf_bot = (char*)malloc(H_LEN * loc_w * sizeof(char));
+    char* in_buf_top = (char*)malloc(H_LEN * loc_w * sizeof(char));
+    char* in_buf_bot = (char*)malloc(H_LEN * loc_w * sizeof(char));
 
     // Check for top neigbour and send upwards
     if (0 <= target_cells[0]) {
-        get_row(grid, out_buf_top, 0);
+        get_rows(grid, out_buf_top, 0);
         MPI_Isend(out_buf_top, loc_w, MPI_CHAR, target_cells[0], my_id, grid_comm, &send_up);
         MPI_Irecv(in_buf_top, loc_w, MPI_CHAR, target_cells[0], target_cells[0], grid_comm, &recv_up);
     }
     // Check for bot neigbour
     if (0 <= target_cells[1]) {
-        get_row(grid, out_buf_bot, loc_h-1);
+        get_rows(grid, out_buf_bot, loc_h-1);
         MPI_Isend(out_buf_bot, loc_w, MPI_CHAR, target_cells[1], my_id, grid_comm, &send_down);
         MPI_Irecv(in_buf_bot, loc_w, MPI_CHAR, target_cells[1], target_cells[1], grid_comm, &recv_down);
     }
@@ -196,22 +212,24 @@ void update_send(char** grid, char** next_grid, int* target_cells, MPI_Comm grid
     // Wait for recv from bot and send to bot
     if (0 <= target_cells[1]) {
         MPI_Wait(&recv_down, MPI_STATUS_IGNORE);
-        set_row(grid, in_buf_bot, loc_h);
+        set_rows(grid, in_buf_bot, loc_h);
         MPI_Wait(&send_down, MPI_STATUS_IGNORE);
     }
     // Wait for recv from top
     if (0 <= target_cells[0]) {
         MPI_Wait(&recv_up, MPI_STATUS_IGNORE);
-        set_row(grid, in_buf_top, -1);
+        set_rows(grid, in_buf_top, -1);
     }
 
     // Calculate all borders and update grid
     #pragma omp parallel
     {
-        #pragma omp for schedule(guided)
+        #pragma omp for collapse(2) schedule(guided)
         for(int x = 0; x < loc_w; x++) {
-            next_grid[0][x] = next_state(grid,0,x);
-            next_grid[loc_h-1][x] = next_state(grid,loc_h-1,x); 
+            for(int count = 0; count < H_LEN; count++) {
+                next_grid[0-count][x] = next_state(grid,0-count,x);
+                next_grid[loc_h-1+count][x] = next_state(grid,loc_h-1+count,x);
+            }
         }
 
         #pragma omp for collapse(2) schedule(guided)
@@ -255,7 +273,6 @@ int main(int argc, char* argv[]){
     int my_neigbours[2];
 
     // ================== MPI ==================
-    double t_start = omp_get_wtime();
     // Configure MPI parallelization based on input arguments
     MPI_Init(&argc, &argv);    
     MPI_Comm_rank(MPI_COMM_WORLD, &my_id);
@@ -289,45 +306,43 @@ int main(int argc, char* argv[]){
     }
 
     if (my_grid_id == 0) {
-        printf("Res:%dx%d | grid: %dx%d\n", H, W, dim_sizes[0], dim_sizes[1]);
+        printf("Res:%dx%d | grid: %dx%d\n", W, H, dim_sizes[0], dim_sizes[1]);
     }
 
-    char** grid = alloc_grid(h_size, W, X_EDGE, Y_EDGE);
-    char** next_grid = alloc_grid(h_size, W, X_EDGE, Y_EDGE);
-    //printf("hsize: %d\n", h_size);
+    char** grid = alloc_grid(h_size, W, H_LEN, V_LEN);
+    char** next_grid = alloc_grid(h_size, W, H_LEN, V_LEN);
     
     // Setup local sizes for process
     loc_h = h_size;
     loc_w = W;    
     proc_seed = my_id;
-    printf("id:%d [%d,%d] | neighb: [%d,%d] | sizes: [%d,%d]\n", my_grid_id, my_grid_coords[0], my_grid_coords[1], my_neigbours[0], my_neigbours[1], loc_h, loc_w);
+    printf("id:%d [%d,%d] | neighb: [%d,%d] | sizes: [%d,%d]\n", my_grid_id, my_grid_coords[0], my_grid_coords[1], my_neigbours[0], my_neigbours[1], loc_w, loc_h);
 
     init(grid, 0.7);
 
     // Spark fire in three processes
-    if (my_grid_id == 0)
-        spark(grid, 5);
-    
-    printf("id:%d",my_grid_id);
-    print_grid(grid, NULL);
+    if (my_id == 0) spark(grid, 10);
 
-    /**
-     * Simulation
-     * 1. Create asynchronous send and receive
-     * 2. Calculate all cells except borders
-     * 3. Wait for send and recv
-     * 4. Calculate borders and update grid
-    */
+    double t_start = omp_get_wtime();
+    
+    // Simulation loop
     for (t = 0; t < ITER; t++) {
-        update_send(grid,next_grid,my_neigbours,grid_comm,my_grid_id);
+        printf("t=%d\n",t);
+        printf("id:%d\n",my_grid_id);
+        print_grid(grid, NULL);
+        printf("\n");
+        if (t % H_LEN == 0) {
+            // Perform iteration with send
+            update_send(grid, next_grid, my_neigbours, grid_comm, my_grid_id);
+        } else {
+            // Perform iteration without send
+            update_nosend(grid, next_grid, t % H_LEN);
+        }
     }
+    double t_end = omp_get_wtime();
 
     MPI_Finalize();
 
-    printf("id:%d",my_grid_id);
-    print_grid(grid, my_neigbours);
-
-    double t_end = omp_get_wtime();
     if (my_grid_id == 0)
         printf("Elapsed time = %f\n", t_end-t_start);
 }
