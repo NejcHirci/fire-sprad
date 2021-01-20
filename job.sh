@@ -1,13 +1,13 @@
 #!/bin/bash
 #SBATCH --time=00:30:00   # walltime
 #SBATCH --reservation=fri # reservation
-#SBATCH --nodes=4   # number of nodes
-#SBATCH --ntasks=4  # number of tasks
-#SBATCH --cpus-per-task=16 # cpu-cores per task 
+#SBATCH --nodes=1   # number of nodes
+#SBATCH --ntasks=16  # number of tasks
+#SBATCH --cpus-per-task=4 # cpu-cores per task 
 #SBATCH --hint=nomultithread # 1 thread per physical core 
 #SBATCH --mem-per-cpu=500M   # memory per CPU core
-#SBATCH -J "pozar"   # job name
-#SBATCH --output=result_%j.txt
+#SBATCH -J "pozar_blocks"   # job name
+#SBATCH --output=result_%x.txt
 
 echo "SLURM_JOB_NNODES="$SLURM_JOB_NUM_NODES
 echo "SLURM_JOB_CPUS_PER_NODE="$SLURM_JOB_CPUS_PER_NODE
