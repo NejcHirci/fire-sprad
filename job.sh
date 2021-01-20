@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH --time=00:30:00   # walltime
 #SBATCH --reservation=fri # reservation
-#SBATCH --nodes=2   # number of nodes
-#SBATCH --ntasks=2  # number of tasks
-#SBATCH --cpus-per-task=4 # cpu-cores per task 
+#SBATCH --nodes=4   # number of nodes
+#SBATCH --ntasks=4  # number of tasks
+#SBATCH --cpus-per-task=16 # cpu-cores per task 
 #SBATCH --hint=nomultithread # 1 thread per physical core 
 #SBATCH --mem-per-cpu=500M   # memory per CPU core
 #SBATCH -J "pozar"   # job name
