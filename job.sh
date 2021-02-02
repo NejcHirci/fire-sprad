@@ -1,12 +1,12 @@
 #!/bin/bash
-#SBATCH --time=00:30:00   # walltime
-#SBATCH --reservation=fri # reservation
-#SBATCH --nodes=1   # number of nodes
-#SBATCH --ntasks=16  # number of tasks
-#SBATCH --cpus-per-task=4 # cpu-cores per task 
+#SBATCH --time=00:30:00      # walltime
+#SBATCJ --reservation=fri    # reservation
+#SBATCH --nodes=3            # number of nodes
+#SBATCH --ntasks=9           # number of tasks
+#SBATCH --cpus-per-task=2    # cpu-cores per task 
 #SBATCH --hint=nomultithread # 1 thread per physical core 
 #SBATCH --mem-per-cpu=500M   # memory per CPU core
-#SBATCH -J "pozar_blocks"   # job name
+#SBATCH -J "test"         # job name
 #SBATCH --output=result_%x.txt
 
 echo "SLURM_JOB_NNODES="$SLURM_JOB_NUM_NODES
@@ -21,5 +21,5 @@ export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
 # OpenMP binding
 export OMP_PLACES=cores
 
-mpirun --map-by socket --mca btl self,vader,tcp ./out 
+mpirun --map-by socket ./out 
 exit 1

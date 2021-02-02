@@ -8,9 +8,9 @@
 #include "FreeImage.h"
 #include "mpi.h"
 
-#define H 8000
-#define W 8000
-#define ITER 1000//number of iterations
+#define H 200
+#define W 200
+#define ITER 5//number of iterations
 #define P_ST 0.01 //prob. of fire starting in a cell at init
 #define P_BD 0.6 //prob. of burning cell burning down
 #define P_H 0.58 //constant spreading prob.
@@ -286,31 +286,31 @@ void update_send_blocks(char** grid, char** next_grid, int* target_cells, MPI_Co
     char* in_buf_right = (char*)malloc(EDGE_LEN * loc_h * sizeof(char));
     
     // Top
-    if (0 <= target_cells[0]) {
+    if (0 <= target_cells[2]) {
         get_rows(grid, out_buf_top, 0);
-        MPI_Isend(out_buf_top, EDGE_LEN * loc_w, MPI_CHAR, target_cells[0], my_id, grid_comm, &top_send);
-        MPI_Irecv(in_buf_top, EDGE_LEN * loc_w, MPI_CHAR, target_cells[0], target_cells[0], grid_comm, &top_recv);
+        MPI_Isend(out_buf_top, EDGE_LEN * loc_w, MPI_CHAR, target_cells[2], my_id, grid_comm, &top_send);
+        MPI_Irecv(in_buf_top, EDGE_LEN * loc_w, MPI_CHAR, target_cells[2], target_cells[2], grid_comm, &top_recv);
     }
     
     // Bot
-    if (0 <= target_cells[1]) {
+    if (0 <= target_cells[3]) {
         get_rows(grid, out_buf_bot, loc_h-EDGE_LEN);
-        MPI_Isend(out_buf_bot, EDGE_LEN * loc_w, MPI_CHAR, target_cells[1], my_id, grid_comm, &bot_send);
-        MPI_Irecv(in_buf_bot, EDGE_LEN * loc_w, MPI_CHAR, target_cells[1], target_cells[1], grid_comm, &bot_recv);
+        MPI_Isend(out_buf_bot, EDGE_LEN * loc_w, MPI_CHAR, target_cells[3], my_id, grid_comm, &bot_send);
+        MPI_Irecv(in_buf_bot, EDGE_LEN * loc_w, MPI_CHAR, target_cells[3], target_cells[3], grid_comm, &bot_recv);
     }
     
     // Left
-    if (0 <= target_cells[2]) {
+    if (0 <= target_cells[0]) {
         get_cols(grid, out_buf_left, 0);
-        MPI_Isend(out_buf_left, EDGE_LEN * loc_h, MPI_CHAR, target_cells[2], my_id, grid_comm, &left_send);
-        MPI_Irecv(in_buf_left, EDGE_LEN * loc_h, MPI_CHAR, target_cells[2], target_cells[2], grid_comm, &left_recv);
+        MPI_Isend(out_buf_left, EDGE_LEN * loc_h, MPI_CHAR, target_cells[0], my_id, grid_comm, &left_send);
+        MPI_Irecv(in_buf_left, EDGE_LEN * loc_h, MPI_CHAR, target_cells[0], target_cells[0], grid_comm, &left_recv);
     }
     
     // Right
-    if (0 <= target_cells[3]) {
+    if (0 <= target_cells[1]) {
         get_cols(grid, out_buf_left, loc_w-EDGE_LEN);
-        MPI_Isend(out_buf_left, EDGE_LEN * loc_h, MPI_CHAR, target_cells[3], my_id, grid_comm, &right_send);
-        MPI_Irecv(in_buf_left, EDGE_LEN * loc_h, MPI_CHAR, target_cells[3], target_cells[3], grid_comm, &right_recv);
+        MPI_Isend(out_buf_left, EDGE_LEN * loc_h, MPI_CHAR, target_cells[1], my_id, grid_comm, &right_send);
+        MPI_Irecv(in_buf_left, EDGE_LEN * loc_h, MPI_CHAR, target_cells[1], target_cells[1], grid_comm, &right_recv);
     }
     
 
@@ -324,32 +324,32 @@ void update_send_blocks(char** grid, char** next_grid, int* target_cells, MPI_Co
     }
 
     // Wait for send to top
-    if (0 <= target_cells[0]) {
+    if (0 <= target_cells[2]) {
         MPI_Wait(&top_send, MPI_STATUS_IGNORE);
     }
     // Wait for recv from bot and send to bot
-    if (0 <= target_cells[1]) {
+    if (0 <= target_cells[3]) {
         MPI_Wait(&bot_recv, MPI_STATUS_IGNORE);
         set_rows(grid, in_buf_bot, loc_h);
         MPI_Wait(&bot_send, MPI_STATUS_IGNORE);
     }
     // Wait for recv from top
-    if (0 <= target_cells[0]) {
+    if (0 <= target_cells[2]) {
         MPI_Wait(&top_recv, MPI_STATUS_IGNORE);
         set_rows(grid, in_buf_top, -EDGE_LEN);
     }
 
     // Wait for send to left
-    if (0 <= target_cells[2]) {
+    if (0 <= target_cells[0]) {
         MPI_Wait(&left_send, MPI_STATUS_IGNORE);
     }
     // Wait for recv from right and send to right
-    if (0 <= target_cells[3]) {
+    if (0 <= target_cells[1]) {
         MPI_Wait(&right_recv, MPI_STATUS_IGNORE);
         set_cols(grid, in_buf_right, loc_h);
         MPI_Wait(&right_send, MPI_STATUS_IGNORE);
     }// Wait for recv from left
-    if (0 <= target_cells[2]) {
+    if (0 <= target_cells[0]) {
         MPI_Wait(&left_recv, MPI_STATUS_IGNORE);
         set_cols(grid, in_buf_left, -EDGE_LEN);
     }
@@ -388,7 +388,7 @@ void update_send_blocks(char** grid, char** next_grid, int* target_cells, MPI_Co
     free(in_buf_right);
 }
 
-// Returns grid that can be accessed like [i][j], and has "out-of-bound" edges allocated
+// Returns grid that can be accessed like [i][j], and has padded edges allocated
 char** alloc_grid(int h, int w, int x_edge, int y_edge){
     char* alloc = (char *) malloc((h+2*x_edge) * (w+2*y_edge) * sizeof(char));
     char** grid = (char **) malloc((h+2*x_edge) * sizeof(char *));
@@ -435,13 +435,14 @@ int main(int argc, char* argv[]){
     MPI_Cart_shift(grid_comm, 0, 1, &my_neigbours[2], &my_neigbours[3]);
     MPI_Cart_shift(grid_comm, 1, 1, &my_neigbours[0], &my_neigbours[1]);
 
-    // Each process generates its own grid
-    int h_size = (int)round((double) H / (double) dim_sizes[0]);
-    int w_size = (int)round((double) W / (double) dim_sizes[1]);
-    if (my_id == num_procs-1) {
-        h_size = H - h_size * (dim_sizes[0]-1); //last process gets less
-        w_size = W - w_size * (dim_sizes[1]-1);
-    }
+    // Divide the grid amongst processes by spliting the modulo amongst
+    // first modulo processes
+
+    int h_size = H / dim_sizes[0];
+    int w_size = W / dim_sizes[1];
+
+    if (my_grid_coords[0] < H % dim_sizes[0]) h_size += 1;
+    if (dim_sizes[1]-my_grid_coords[1] <= W % dim_sizes[1]) w_size += 1;
 
     if (my_grid_id == 0) 
         printf("Res:%dx%d | grid: %dx%d | edge: %d | iter: %d\n", W, H, dim_sizes[0], dim_sizes[1], EDGE_LEN, ITER);
@@ -455,7 +456,7 @@ int main(int argc, char* argv[]){
     loc_h = h_size;
     loc_w = w_size;    
     proc_seed = my_id;
-    printf("id:%d [%d,%d] | neighb: [%d,%d,%d,%d] | sizes: [%d,%d]\n", my_grid_id, my_grid_coords[0], my_grid_coords[1], my_neigbours[0], my_neigbours[1], my_neigbours[2], my_neigbours[3], loc_w, loc_h);
+    printf("id:%d [%d,%d] | neighb: [%d,%d,%d,%d] | sizes: [%d,%d]\n", my_grid_id, my_grid_coords[0], my_grid_coords[1], my_neigbours[0], my_neigbours[1], my_neigbours[2], my_neigbours[3], loc_h, loc_w);
 
     init(grid, 0.7);
     if (my_id == 0) spark(grid, 10);
