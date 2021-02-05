@@ -4,26 +4,25 @@
 #include<time.h>
 #include <math.h>
 #include<omp.h>
-
 #include "FreeImage.h"
 #include "mpi.h"
 
-#define H 200
-#define W 200
-#define ITER 5//number of iterations
+
+#define ITER 100//number of iterations
 #define P_ST 0.01 //prob. of fire starting in a cell at init
 #define P_BD 0.6 //prob. of burning cell burning down
 #define P_H 0.58 //constant spreading prob.
 #define IMAGE_PATH "./temp/" //image sequence is stored here
-#define EDGE_LEN 1 //width of the edge (for row split horizontal and for block split both
-#define BLOCKS 1 //0 - aggregate by rows and 1 - aggregate by blocks
 
-int t;
+int H = 2000;       // height of grid
+int W = 2000;       // width of grid
+int EDGE_LEN = 1;   //width of the edge (for row split horizontal and for block split both 
+int BLOCKS = 1;     //0 - aggregate by rows and 1 - aggregate by blocks
+
 unsigned int proc_seed;
-int loc_h;
-int loc_w;
+int local_H;
+int local_W;
 char symbols[5] = {'E',' ','.','&','*'};
-unsigned char *image;
 int colors[5][3] = {{0,0,0},
                 {80, 80, 80},
                 {10, 40, 15},
@@ -32,12 +31,14 @@ int colors[5][3] = {{0,0,0},
 
 /*  
     Cell states:
+    0 - invalid state
     1 - non-flammable cell
     2 - flammable but intact
     3 - currently burning
     4 - had burned down
 */
 
+// ================ UTILITY ================
 // Find divisor closest to square root
 int get_divisor(int x) {
     for (int j = (int)floor(sqrt(x)); j < x; j++){
@@ -62,16 +63,20 @@ int set_dims(int num_procs, int* dims) {
     return 1;
 }
 
+// Get random number
 double rnd(){
     return (double) rand_r(&proc_seed) / (double) RAND_MAX;
 }
 
+
+
+// ================ GRID MANIPULATION ================ 
 // Store rows to out_buf for send from x to x+EDGE_LEN
 void get_rows(char** grid, char* out_buf, int y) {
     int count = 0;
     while (count < EDGE_LEN) {
-        for (int x = 0; x < loc_w; x++){
-            out_buf[count*loc_w + x] = grid[y+count][x];
+        for (int x = 0; x < local_W; x++){
+            out_buf[count*local_W + x] = grid[y+count][x];
         }
         count++;
     }
@@ -81,8 +86,8 @@ void get_rows(char** grid, char* out_buf, int y) {
 void get_cols(char** grid, char* out_buf, int x){
     int count = 0;
     while (count < EDGE_LEN) {
-        for (int y = 0; y < loc_h; y++){
-            out_buf[count*loc_h + y] = grid[y][x + count];
+        for (int y = 0; y < local_H; y++){
+            out_buf[count*local_H + y] = grid[y][x + count];
         }
         count++;
     }
@@ -92,8 +97,8 @@ void get_cols(char** grid, char* out_buf, int x){
 void set_rows(char** grid, char* in_buf, int y) {
     int count = 0;
     while (count < EDGE_LEN) {
-        for (int x = 0; x < loc_w; x++){
-            grid[y+count][x] = in_buf[x + count*loc_w];
+        for (int x = 0; x < local_W; x++){
+            grid[y+count][x] = in_buf[x + count*local_W];
         }
         count++;
     }
@@ -103,17 +108,80 @@ void set_rows(char** grid, char* in_buf, int y) {
 void set_cols(char** grid, char* in_buf, int x) {
     int count = 0;
     while (count < EDGE_LEN) {
-        for (int y = 0; y < loc_h; y++){
-            grid[y][x+count] = in_buf[y + count*loc_h];
+        for (int y = 0; y < local_H; y++){
+            grid[y][x+count] = in_buf[y + count*local_H];
         }
         count++;
     }
 } 
 
+// Print the grid in current state
+void print_grid(char** grid, int* target_cells){
+    for(int y = 0; y < local_H; y++){
+        for(int x = 0; x < local_W; x++){
+            printf("%c", symbols[grid[y][x]]);
+        }
+        printf("\n");
+    }
+
+    if (target_cells != NULL && 0 <= target_cells[0]) {
+        printf("\nTOP\n");
+        for (int i = 0; i < local_W; i++){
+            printf("%c", symbols[grid[-1][i]]);
+        }
+    }
+    if (target_cells != NULL && 0 <= target_cells[1]) {
+        printf("\nBOT\n");
+        for (int i = 0; i < local_W; i++){
+            printf("%c", symbols[grid[local_H][i]]);
+        }
+    }
+         
+}
+
+// Store grid image of current state
+void render_grid(char** grid, int t, int row, int col){
+    int pitch = ((32 * W + 31) / 32) * 4;
+    unsigned char* image = (unsigned char *) malloc(H * W * sizeof(unsigned char) * 4);
+
+    for(int y = 0; y < H; y++)
+        for(int x = 0; x < W; x++){
+            int state = grid[y][x];
+            image[4*y*W + 4*x + 0] = colors[state][2];  // Blue
+            image[4*y*W + 4*x + 1] = colors[state][1];  // Green
+			image[4*y*W + 4*x + 2] = colors[state][0];  // Red
+			image[4*y*W + 4*x + 3] = 255;               // Alpha
+        }
+
+    char image_name[16];
+    sprintf(image_name, "%s%d_%d_%d.png", IMAGE_PATH, t, row, col);
+
+    printf("%s\n", image_name);
+
+    FIBITMAP *dst = FreeImage_ConvertFromRawBits(image, W, H, pitch,
+		32, FI_RGBA_RED_MASK, FI_RGBA_GREEN_MASK, FI_RGBA_BLUE_MASK, TRUE);
+	FreeImage_Save(FIF_PNG, dst, image_name, 0);
+}
+
+// Returns grid that can be accessed like [i][j], and has padded edges allocated
+char** alloc_grid(int h, int w, int x_edge, int y_edge){
+    char* alloc = (char *) malloc((h+2*x_edge) * (w+2*y_edge) * sizeof(char));
+    char** grid = (char **) malloc((h+2*x_edge) * sizeof(char *));
+
+    for(int i = 0; i < (h+2*x_edge); i++)
+            grid[i] = &alloc[i*(w+2*y_edge)] + y_edge;
+    grid += x_edge;
+
+    return grid;
+}
+
+
+
+// ================ CELL SIMULATION ================
 // Initialize cells (to 1 or 2)
 void init(char** grid, double density){
-    for(int y = 0; y < loc_h; y++)
-        for(int x = 0; x < loc_w; x++){
+    for(int y = 0; y < local_H; y++)
+        for(int x = 0; x < local_W; x++){
             grid[y][x] = rnd() < density ? 2 : 1;
         }
 }
@@ -122,8 +190,8 @@ void init(char** grid, double density){
 void spark(char** grid, int n){
     int y0, x0;
     for(int i = 0; i < n; i++){
-        y0 = rand_r(&proc_seed) % loc_h;
-        x0 = rand_r(&proc_seed) % loc_w;
+        y0 = rand_r(&proc_seed) % local_H;
+        x0 = rand_r(&proc_seed) % local_W;
         grid[y0][x0] = 3;
     }
 }
@@ -141,7 +209,7 @@ int next_state(char** grid, int y, int x){
             for(int j = -1; j <=1; j++){           
                 // fire spreads from each neighbor with some probability
                 double p_spread = P_H; //change to function
-                if (y+i < 0-EDGE_LEN || y+i > loc_h+EDGE_LEN || x+j < 0-EDGE_LEN || x+j > loc_w+EDGE_LEN)
+                if (y+i < 0-EDGE_LEN || y+i > local_H+EDGE_LEN || x+j < 0-EDGE_LEN || x+j > local_W+EDGE_LEN)
                     continue;
                 if (grid[y+i][x+j] == 3 && rnd() < p_spread)
                     return 3;
@@ -152,30 +220,9 @@ int next_state(char** grid, int y, int x){
     return grid[y][x];
 }
 
-// Print the grid in current state
-void print_grid(char** grid, int* target_cells){
-    for(int y = 0; y < loc_h; y++){
-        for(int x = 0; x < loc_w; x++){
-            printf("%c", symbols[grid[y][x]]);
-        }
-        printf("\n");
-    }
 
-    if (target_cells != NULL && 0 <= target_cells[0]) {
-        printf("\nTOP\n");
-        for (int i = 0; i < loc_w; i++){
-            printf("%c", symbols[grid[-1][i]]);
-        }
-    }
-    if (target_cells != NULL && 0 <= target_cells[1]) {
-        printf("\nBOT\n");
-        for (int i = 0; i < loc_w; i++){
-            printf("%c", symbols[grid[loc_h][i]]);
-        }
-    }
-         
-}
 
+// ================ UPDATE METHODS ================
 // Parallel state update for whole grid with no send
 void update_nosend(char** grid, char** next_grid, int exchange, int blocks){ 
     int eH = - EDGE_LEN + 1 + exchange;
@@ -183,13 +230,13 @@ void update_nosend(char** grid, char** next_grid, int exchange, int blocks){
     #pragma omp parallel
     {
         #pragma omp for collapse(2) schedule(guided)
-        for(int y = eH; y < loc_h-eH; y++)
-            for(int x = eW; x < loc_w-eW; x++)
+        for(int y = eH; y < local_H-eH; y++)
+            for(int x = eW; x < local_W-eW; x++)
                 next_grid[y][x] = next_state(grid,y,x);
 
         #pragma omp for collapse(2) schedule(guided)
-        for(int y = eH; y < loc_h-eH; y++)
-            for(int x = eW; x < loc_w-eW; x++)
+        for(int y = eH; y < local_H-eH; y++)
+            for(int x = eW; x < local_W-eW; x++)
                 grid[y][x] = next_grid[y][x];
     }
 }
@@ -201,31 +248,31 @@ void update_send(char** grid, char** next_grid, int* target_cells, MPI_Comm grid
     MPI_Status status;
 
     // Prepare to send and receive asynchronous
-    char* out_buf_top = (char*)malloc(EDGE_LEN * loc_w * sizeof(char));
-    char* out_buf_bot = (char*)malloc(EDGE_LEN * loc_w * sizeof(char));
-    char* in_buf_top = (char*)malloc(EDGE_LEN * loc_w * sizeof(char));
-    char* in_buf_bot = (char*)malloc(EDGE_LEN * loc_w * sizeof(char));
+    char* out_buf_top = (char*)malloc(EDGE_LEN * local_W * sizeof(char));
+    char* out_buf_bot = (char*)malloc(EDGE_LEN * local_W * sizeof(char));
+    char* in_buf_top = (char*)malloc(EDGE_LEN * local_W * sizeof(char));
+    char* in_buf_bot = (char*)malloc(EDGE_LEN * local_W * sizeof(char));
 
     // Check for top neigbour and send upwards
     if (0 <= target_cells[0]) {
         get_rows(grid, out_buf_top, 0);
-        MPI_Isend(out_buf_top, EDGE_LEN * loc_w, MPI_CHAR, target_cells[0], my_id, grid_comm, &send_up);
-        MPI_Irecv(in_buf_top, EDGE_LEN * loc_w, MPI_CHAR, target_cells[0], target_cells[0], grid_comm, &recv_up);
+        MPI_Isend(out_buf_top, EDGE_LEN * local_W, MPI_CHAR, target_cells[0], my_id, grid_comm, &send_up);
+        MPI_Irecv(in_buf_top, EDGE_LEN * local_W, MPI_CHAR, target_cells[0], target_cells[0], grid_comm, &recv_up);
     }
 
     // Check for bot neigbour
     if (0 <= target_cells[1]) {
-        get_rows(grid, out_buf_bot, loc_h-EDGE_LEN);
-        MPI_Isend(out_buf_bot, EDGE_LEN * loc_w, MPI_CHAR, target_cells[1], my_id, grid_comm, &send_down);
-        MPI_Irecv(in_buf_bot, EDGE_LEN * loc_w, MPI_CHAR, target_cells[1], target_cells[1], grid_comm, &recv_down);
+        get_rows(grid, out_buf_bot, local_H-EDGE_LEN);
+        MPI_Isend(out_buf_bot, EDGE_LEN * local_W, MPI_CHAR, target_cells[1], my_id, grid_comm, &send_down);
+        MPI_Irecv(in_buf_bot, EDGE_LEN * local_W, MPI_CHAR, target_cells[1], target_cells[1], grid_comm, &recv_down);
     }
 
     // Calculate all except borders
     #pragma omp parallel
     {
         #pragma omp for collapse(2) schedule(guided)
-        for(int y = 1; y < loc_h-1; y++)
-            for(int x = 0; x < loc_w; x++)
+        for(int y = 1; y < local_H-1; y++)
+            for(int x = 0; x < local_W; x++)
                 next_grid[y][x] = next_state(grid,y,x);
     }
 
@@ -236,7 +283,7 @@ void update_send(char** grid, char** next_grid, int* target_cells, MPI_Comm grid
     // Wait for recv from bot and send to bot
     if (0 <= target_cells[1]) {
         MPI_Wait(&recv_down, MPI_STATUS_IGNORE);
-        set_rows(grid, in_buf_bot, loc_h);
+        set_rows(grid, in_buf_bot, local_H);
         MPI_Wait(&send_down, MPI_STATUS_IGNORE);
     }
     // Wait for recv from top
@@ -249,16 +296,16 @@ void update_send(char** grid, char** next_grid, int* target_cells, MPI_Comm grid
     #pragma omp parallel
     {
         #pragma omp for collapse(2) schedule(guided)
-        for(int x = 0; x < loc_w; x++) {
+        for(int x = 0; x < local_W; x++) {
             for(int count = 0; count < EDGE_LEN; count++) {
                 next_grid[0-count][x] = next_state(grid,0-count,x);
-                next_grid[loc_h-1+count][x] = next_state(grid,loc_h-1+count,x);
+                next_grid[local_H-1+count][x] = next_state(grid,local_H-1+count,x);
             }
         }
 
         #pragma omp for collapse(2) schedule(guided)
-        for(int y = 0; y < loc_h; y++)
-            for(int x = 0; x < loc_w; x++)
+        for(int y = 0; y < local_H; y++)
+            for(int x = 0; x < local_W; x++)
                 grid[y][x] = next_grid[y][x];
     }
 
@@ -275,42 +322,42 @@ void update_send_blocks(char** grid, char** next_grid, int* target_cells, MPI_Co
     MPI_Request top_send,top_recv,bot_send,bot_recv,left_send,left_recv,right_send,right_recv;
     MPI_Status status;
 
-    char* out_buf_top = (char*)malloc(EDGE_LEN * loc_w * sizeof(char));
-    char* out_buf_bot = (char*)malloc(EDGE_LEN * loc_w * sizeof(char));
-    char* out_buf_left = (char*)malloc(EDGE_LEN * loc_h * sizeof(char));
-    char* out_buf_right = (char*)malloc(EDGE_LEN * loc_h * sizeof(char));
+    char* out_buf_top = (char*)malloc(EDGE_LEN * local_W * sizeof(char));
+    char* out_buf_bot = (char*)malloc(EDGE_LEN * local_W * sizeof(char));
+    char* out_buf_left = (char*)malloc(EDGE_LEN * local_H * sizeof(char));
+    char* out_buf_right = (char*)malloc(EDGE_LEN * local_H * sizeof(char));
 
-    char* in_buf_top = (char*)malloc(EDGE_LEN * loc_w * sizeof(char));
-    char* in_buf_bot = (char*)malloc(EDGE_LEN * loc_w * sizeof(char));
-    char* in_buf_left = (char*)malloc(EDGE_LEN * loc_h * sizeof(char));
-    char* in_buf_right = (char*)malloc(EDGE_LEN * loc_h * sizeof(char));
+    char* in_buf_top = (char*)malloc(EDGE_LEN * local_W * sizeof(char));
+    char* in_buf_bot = (char*)malloc(EDGE_LEN * local_W * sizeof(char));
+    char* in_buf_left = (char*)malloc(EDGE_LEN * local_H * sizeof(char));
+    char* in_buf_right = (char*)malloc(EDGE_LEN * local_H * sizeof(char));
     
     // Top
     if (0 <= target_cells[2]) {
         get_rows(grid, out_buf_top, 0);
-        MPI_Isend(out_buf_top, EDGE_LEN * loc_w, MPI_CHAR, target_cells[2], my_id, grid_comm, &top_send);
-        MPI_Irecv(in_buf_top, EDGE_LEN * loc_w, MPI_CHAR, target_cells[2], target_cells[2], grid_comm, &top_recv);
+        MPI_Isend(out_buf_top, EDGE_LEN * local_W, MPI_CHAR, target_cells[2], my_id, grid_comm, &top_send);
+        MPI_Irecv(in_buf_top, EDGE_LEN * local_W, MPI_CHAR, target_cells[2], target_cells[2], grid_comm, &top_recv);
     }
     
     // Bot
     if (0 <= target_cells[3]) {
-        get_rows(grid, out_buf_bot, loc_h-EDGE_LEN);
-        MPI_Isend(out_buf_bot, EDGE_LEN * loc_w, MPI_CHAR, target_cells[3], my_id, grid_comm, &bot_send);
-        MPI_Irecv(in_buf_bot, EDGE_LEN * loc_w, MPI_CHAR, target_cells[3], target_cells[3], grid_comm, &bot_recv);
+        get_rows(grid, out_buf_bot, local_H-EDGE_LEN);
+        MPI_Isend(out_buf_bot, EDGE_LEN * local_W, MPI_CHAR, target_cells[3], my_id, grid_comm, &bot_send);
+        MPI_Irecv(in_buf_bot, EDGE_LEN * local_W, MPI_CHAR, target_cells[3], target_cells[3], grid_comm, &bot_recv);
     }
     
     // Left
     if (0 <= target_cells[0]) {
         get_cols(grid, out_buf_left, 0);
-        MPI_Isend(out_buf_left, EDGE_LEN * loc_h, MPI_CHAR, target_cells[0], my_id, grid_comm, &left_send);
-        MPI_Irecv(in_buf_left, EDGE_LEN * loc_h, MPI_CHAR, target_cells[0], target_cells[0], grid_comm, &left_recv);
+        MPI_Isend(out_buf_left, EDGE_LEN * local_H, MPI_CHAR, target_cells[0], my_id, grid_comm, &left_send);
+        MPI_Irecv(in_buf_left, EDGE_LEN * local_H, MPI_CHAR, target_cells[0], target_cells[0], grid_comm, &left_recv);
     }
     
     // Right
     if (0 <= target_cells[1]) {
-        get_cols(grid, out_buf_left, loc_w-EDGE_LEN);
-        MPI_Isend(out_buf_left, EDGE_LEN * loc_h, MPI_CHAR, target_cells[1], my_id, grid_comm, &right_send);
-        MPI_Irecv(in_buf_left, EDGE_LEN * loc_h, MPI_CHAR, target_cells[1], target_cells[1], grid_comm, &right_recv);
+        get_cols(grid, out_buf_left, local_W-EDGE_LEN);
+        MPI_Isend(out_buf_left, EDGE_LEN * local_H, MPI_CHAR, target_cells[1], my_id, grid_comm, &right_send);
+        MPI_Irecv(in_buf_left, EDGE_LEN * local_H, MPI_CHAR, target_cells[1], target_cells[1], grid_comm, &right_recv);
     }
     
 
@@ -318,8 +365,8 @@ void update_send_blocks(char** grid, char** next_grid, int* target_cells, MPI_Co
     #pragma omp parallel
     {
         #pragma omp for collapse(2) schedule(guided)
-        for(int y = 1; y < loc_h-1; y++)
-            for(int x = 1; x < loc_w-1; x++)
+        for(int y = 1; y < local_H-1; y++)
+            for(int x = 1; x < local_W-1; x++)
                 next_grid[y][x] = next_state(grid,y,x);
     }
 
@@ -330,7 +377,7 @@ void update_send_blocks(char** grid, char** next_grid, int* target_cells, MPI_Co
     // Wait for recv from bot and send to bot
     if (0 <= target_cells[3]) {
         MPI_Wait(&bot_recv, MPI_STATUS_IGNORE);
-        set_rows(grid, in_buf_bot, loc_h);
+        set_rows(grid, in_buf_bot, local_H);
         MPI_Wait(&bot_send, MPI_STATUS_IGNORE);
     }
     // Wait for recv from top
@@ -346,7 +393,7 @@ void update_send_blocks(char** grid, char** next_grid, int* target_cells, MPI_Co
     // Wait for recv from right and send to right
     if (0 <= target_cells[1]) {
         MPI_Wait(&right_recv, MPI_STATUS_IGNORE);
-        set_cols(grid, in_buf_right, loc_h);
+        set_cols(grid, in_buf_right, local_H);
         MPI_Wait(&right_send, MPI_STATUS_IGNORE);
     }// Wait for recv from left
     if (0 <= target_cells[0]) {
@@ -358,22 +405,22 @@ void update_send_blocks(char** grid, char** next_grid, int* target_cells, MPI_Co
     #pragma omp parallel
     {
         #pragma omp for collapse(2) schedule(guided)
-        for(int x = -EDGE_LEN+1; x < loc_w+EDGE_LEN; x++) {
+        for(int x = -EDGE_LEN+1; x < local_W+EDGE_LEN; x++) {
             for(int count = 0; count < EDGE_LEN; count++) {
                 next_grid[0-count][x] = next_state(grid,0-count,x);
-                next_grid[loc_h-1+count][x] = next_state(grid,loc_h-1+count,x);
+                next_grid[local_H-1+count][x] = next_state(grid,local_H-1+count,x);
             }
         }
         #pragma omp for collapse(2) schedule(guided)
-        for(int y = 0; y < loc_h; y++) {
+        for(int y = 0; y < local_H; y++) {
             for(int count = 0; count < EDGE_LEN; count++) {
                 next_grid[y][0-count] = next_state(grid,y,0-count);
-                next_grid[y][loc_h-1+count] = next_state(grid,y,loc_h-1+count);
+                next_grid[y][local_H-1+count] = next_state(grid,y,local_H-1+count);
             }
         }
         #pragma omp for collapse(2) schedule(guided)
-        for(int y = 0; y < loc_h; y++)
-            for(int x = 0; x < loc_w; x++)
+        for(int y = 0; y < local_H; y++)
+            for(int x = 0; x < local_W; x++)
                 grid[y][x] = next_grid[y][x];
     }
 
@@ -388,19 +435,37 @@ void update_send_blocks(char** grid, char** next_grid, int* target_cells, MPI_Co
     free(in_buf_right);
 }
 
-// Returns grid that can be accessed like [i][j], and has padded edges allocated
-char** alloc_grid(int h, int w, int x_edge, int y_edge){
-    char* alloc = (char *) malloc((h+2*x_edge) * (w+2*y_edge) * sizeof(char));
-    char** grid = (char **) malloc((h+2*x_edge) * sizeof(char *));
-
-    for(int i = 0; i < (h+2*x_edge); i++)
-            grid[i] = &alloc[i*(w+2*y_edge)] + y_edge;
-    grid += x_edge;
-
-    return grid;
-}
-
 int main(int argc, char* argv[]){
+
+    if (argc <= 4) {
+        printf("Argument order: H W EDGE_LEN BLOCKS\n");
+        exit(1);
+    }
+
+    H = atoi(argv[1]);
+    W = atoi(argv[2]);
+    EDGE_LEN = atoi(argv[3]);
+    BLOCKS = atoi(argv[4]);
+
+    // Check if all arguments are valid
+    if (H < 32 || 8000 < H) {
+        printf("H:%d too small or too big", H);
+        exit(1);
+    }
+    if (W < 32 || 8000 < W) {
+        printf("W:%d too small or too big\n", W);
+        exit(1);
+    }
+    if (EDGE_LEN < 1 || H/32 < EDGE_LEN || W/32 < EDGE_LEN) {
+        printf("EDGE_LEN:%d too small or too big\n", EDGE_LEN);
+        exit(1);
+    }
+    if (BLOCKS != 0 && BLOCKS != 1) {
+        printf("BLOCKS:%d can be only 0 (for rows) or 1 (for blocks)\n", BLOCKS);
+        exit(1);
+    }
+
+
 
     int num_procs, my_id;
     MPI_Status status;
@@ -453,10 +518,10 @@ int main(int argc, char* argv[]){
     char** next_grid = alloc_grid(h_size, w_size, EDGE_LEN, dims == 2 ? EDGE_LEN : 0);
     
     // Setup local sizes for process
-    loc_h = h_size;
-    loc_w = w_size;    
+    local_H = h_size;
+    local_W = w_size;    
     proc_seed = my_id;
-    printf("id:%d [%d,%d] | neighb: [%d,%d,%d,%d] | sizes: [%d,%d]\n", my_grid_id, my_grid_coords[0], my_grid_coords[1], my_neigbours[0], my_neigbours[1], my_neigbours[2], my_neigbours[3], loc_h, loc_w);
+    printf("id:%d [%d,%d] | neighb: [%d,%d,%d,%d] | sizes: [%d,%d]\n", my_grid_id, my_grid_coords[0], my_grid_coords[1], my_neigbours[0], my_neigbours[1], my_neigbours[2], my_neigbours[3], local_H, local_W);
 
     init(grid, 0.7);
     if (my_id == 0) spark(grid, 10);
@@ -464,11 +529,8 @@ int main(int argc, char* argv[]){
     double t_start = omp_get_wtime();
     
     // Simulation loop
-    for (t = 0; t < ITER; t++) {
-        // printf("id=%d\n", my_grid_id);
-        // print_grid(grid, NULL);
-        // printf("\n");
-        if (t % EDGE_LEN == 0) {
+    for (int t = 0; t < ITER; t++) {
+        if (2 <= num_procs && t % EDGE_LEN == 0) {
             // Perform iteration with send
             if (dims == 2) 
                 update_send_blocks(grid, next_grid, my_neigbours, grid_comm, my_grid_id);
@@ -487,6 +549,4 @@ int main(int argc, char* argv[]){
     MPI_Finalize();
 }
 
-
-// Compile with: mpicc -lm -fopenmp parallel.c -o out
-// Run with: sbatch --reservation=fri ./job.sh
+// TO COMPILE: mpicc parallel.c -lm -fopenmp -Wl,-rpath,./ -L./ -l:"libfreeimage.so.3" -o out

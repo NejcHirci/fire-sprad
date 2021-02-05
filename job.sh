@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH --time=00:30:00      # walltime
 #SBATCJ --reservation=fri    # reservation
-#SBATCH --nodes=3            # number of nodes
-#SBATCH --ntasks=9           # number of tasks
-#SBATCH --cpus-per-task=2    # cpu-cores per task 
+#SBATCH --nodes=1            # number of nodes
+#SBATCH --ntasks=4           # number of tasks
+#SBATCH --cpus-per-task=1    # cpu-cores per task 
 #SBATCH --hint=nomultithread # 1 thread per physical core 
 #SBATCH --mem-per-cpu=500M   # memory per CPU core
 #SBATCH -J "test"         # job name
@@ -21,5 +21,11 @@ export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
 # OpenMP binding
 export OMP_PLACES=cores
 
-mpirun --map-by socket ./out 
+# Define variables for fire spread
+H=2000
+W=2000
+EDGE_LEN=1
+BLOCKS=0
+
+mpirun --map-by socket ./out $H $W $EDGE_LEN $BLOCKS
 exit 1
