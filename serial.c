@@ -1,64 +1,84 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <math.h>
 
-#include "FreeImage.h"
-//#include "omp.h"
-//#include "mpi.h"
 
-#define H 32
-#define W 32
-#define ITER 16 //number of iterations
+#define ITER 100//number of iterations
 #define P_ST 0.01 //prob. of fire starting in a cell at init
 #define P_BD 0.6 //prob. of burning cell burning down
 #define P_H 0.58 //constant spreading prob.
 #define IMAGE_PATH "./temp/" //image sequence is stored here
 
-int grid[H][W];
-int next_grid[H][W];
-int t;
-
-char symbols[5] = {' ',' ','.','&','*'};
-unsigned char *image;
+int H = 2000;       // height of grid
+int W = 2000;       // width of grid
+char symbols[5] = {'E',' ','.','&','*'};
 int colors[5][3] = {{0,0,0},
-                {80, 90, 85},
-                {10, 60, 20},
+                {80, 80, 80},
+                {10, 40, 15},
                 {255,215,80},
                 {30, 30, 30 }};
 
 /*  
     Cell states:
+    0 - invalid state
     1 - non-flammable cell
     2 - flammable but intact
     3 - currently burning
     4 - had burned down
 */
 
+// ================ UTILITY ================
+// Get random number
 double rnd(){
     return (double) rand() / (double) RAND_MAX;
 }
 
+
+// ================ GRID MANIPULATION ================ 
+// Print the grid in current state
+void print_grid(char** grid){
+    for(int y = 0; y < H; y++){
+        for(int x = 0; x < W; x++){
+            printf("%c", symbols[grid[y][x]]);
+        }
+        printf("\n");
+    }         
+}
+
+// Returns grid that can be accessed like [i][j], and has padded edges allocated
+char** alloc_grid(int h, int w){
+    char* alloc = (char *) malloc(h * w * sizeof(char));
+    char** grid = (char **) malloc(h * sizeof(char *));
+    for(int i = 0; i < h; i++)
+            grid[i] = &alloc[i*w];
+    return grid;
+}
+
+
+
+// ================ CELL SIMULATION ================
 // Initialize cells (to 1 or 2)
-void init(double density){
+void init(char** grid, double density){
     for(int y = 0; y < H; y++)
         for(int x = 0; x < W; x++){
             grid[y][x] = rnd() < density ? 2 : 1;
         }
 }
 
-// Start the fire in some cells
-void spark(int n){
+// Start the fire in some cells: n - number of sparks
+void spark(char** grid, int n){
     int y0, x0;
     for(int i = 0; i < n; i++){
         y0 = rand() % H;
-        x0 = rand() % W ;
+        x0 = rand() % W;
         grid[y0][x0] = 3;
     }
 }
 
-// GET STATE OF A CELL AT t+1
-int next_state(int y, int x, int t){
+// Get state of a cell at t+1
+int next_state(char** grid, int y, int x){
 
     if (grid[y][x] == 1)
         return 1;
@@ -79,66 +99,56 @@ int next_state(int y, int x, int t){
             }
 
     }
-
     return grid[y][x];
 }
 
-// Update states for whole grid (one iteration)
-void update(){
+
+
+// ================ UPDATE METHODS ================
+// Update grid
+void update(char** grid, char** next_grid){ 
     for(int y = 0; y < H; y++)
         for(int x = 0; x < W; x++)
-            next_grid[y][x] = next_state(y,x,t);
+            next_grid[y][x] = next_state(grid, y,x);
 
     for(int y = 0; y < H; y++)
         for(int x = 0; x < W; x++)
             grid[y][x] = next_grid[y][x];
 }
 
-// Print the grid in current state
-void print_grid(){
-    for(int y = 0; y < H; y++){
-        for(int x = 0; x < W; x++){
-            printf("%c", symbols[grid[y][x]]);
-        }
-        printf("\n");
-    }
-}
-
-// Render grid as png image
-void render_grid(){
-    int pitch = ((32 * W + 31) / 32) * 4;
-
-    for(int y = 0; y < H; y++)
-        for(int x = 0; x < W; x++){
-            int state = grid[y][x];
-            image[4*y*W + 4*x + 0] = colors[state][2];  // Blue
-            image[4*y*W + 4*x + 1] = colors[state][1];  // Green
-			image[4*y*W + 4*x + 2] = colors[state][0];  // Red
-			image[4*y*W + 4*x + 3] = 255;               // Alpha
-        }
-
-    char image_name[16];
-    sprintf(image_name, "%s%d.png", IMAGE_PATH, t);
-
-    printf("%s\n", image_name);
-
-    FIBITMAP *dst = FreeImage_ConvertFromRawBits(image, W, H, pitch,
-		32, FI_RGBA_RED_MASK, FI_RGBA_GREEN_MASK, FI_RGBA_BLUE_MASK, TRUE);
-	FreeImage_Save(FIF_PNG, dst, image_name, 0);
-}
-
 int main(int argc, char* argv[]){
 
-    image = (unsigned char *) malloc(H * W * sizeof(unsigned char) * 4);
-
-    init(0.85);
-    spark(5);
-
-    for(t = 0; t < ITER; t++){
-        print_grid();
-        render_grid();
-        update();
+    if (argc <= 2) {
+        printf("Argument order: H W EDGE_LEN BLOCKS\n");
+        exit(1);
     }
 
-}
+    H = atoi(argv[1]);
+    W = atoi(argv[2]);
 
+    // Check if all arguments are valid
+    if (H < 32 || 8000 < H) {
+        printf("H:%d too small or too big", H);
+        exit(1);
+    }
+    if (W < 32 || 8000 < W) {
+        printf("W:%d too small or too big\n", W);
+        exit(1);
+    }
+    
+
+    // Initialize local grids
+    char** grid = alloc_grid(H, W);
+    char** next_grid = alloc_grid(H, W);
+    
+    init(grid, 0.7);
+    spark(grid, 5);
+
+    clock_t t_start = clock();
+    // Simulation loop
+    for (int t = 0; t < ITER; t++) {
+        update(grid, next_grid);
+    }
+    clock_t t_end = clock();
+    printf("%f\n", (float)(t_end - t_start) / CLOCKS_PER_SEC);
+}

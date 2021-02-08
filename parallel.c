@@ -4,7 +4,6 @@
 #include<time.h>
 #include <math.h>
 #include<omp.h>
-#include "FreeImage.h"
 #include "mpi.h"
 
 
@@ -139,30 +138,6 @@ void print_grid(char** grid, int* target_cells){
          
 }
 
-// Store grid image of current state
-void render_grid(char** grid, int t, int row, int col){
-    int pitch = ((32 * W + 31) / 32) * 4;
-    unsigned char* image = (unsigned char *) malloc(H * W * sizeof(unsigned char) * 4);
-
-    for(int y = 0; y < H; y++)
-        for(int x = 0; x < W; x++){
-            int state = grid[y][x];
-            image[4*y*W + 4*x + 0] = colors[state][2];  // Blue
-            image[4*y*W + 4*x + 1] = colors[state][1];  // Green
-			image[4*y*W + 4*x + 2] = colors[state][0];  // Red
-			image[4*y*W + 4*x + 3] = 255;               // Alpha
-        }
-
-    char image_name[16];
-    sprintf(image_name, "%s%d_%d_%d.png", IMAGE_PATH, t, row, col);
-
-    printf("%s\n", image_name);
-
-    FIBITMAP *dst = FreeImage_ConvertFromRawBits(image, W, H, pitch,
-		32, FI_RGBA_RED_MASK, FI_RGBA_GREEN_MASK, FI_RGBA_BLUE_MASK, TRUE);
-	FreeImage_Save(FIF_PNG, dst, image_name, 0);
-}
-
 // Returns grid that can be accessed like [i][j], and has padded edges allocated
 char** alloc_grid(int h, int w, int x_edge, int y_edge){
     char* alloc = (char *) malloc((h+2*x_edge) * (w+2*y_edge) * sizeof(char));
@@ -229,12 +204,12 @@ void update_nosend(char** grid, char** next_grid, int exchange, int blocks){
     int eW = blocks ? -EDGE_LEN + 1 + exchange : 0; 
     #pragma omp parallel
     {
-        #pragma omp for collapse(2) schedule(guided)
+        #pragma omp for collapse(2) schedule(static)
         for(int y = eH; y < local_H-eH; y++)
             for(int x = eW; x < local_W-eW; x++)
                 next_grid[y][x] = next_state(grid,y,x);
 
-        #pragma omp for collapse(2) schedule(guided)
+        #pragma omp for collapse(2) schedule(static)
         for(int y = eH; y < local_H-eH; y++)
             for(int x = eW; x < local_W-eW; x++)
                 grid[y][x] = next_grid[y][x];
@@ -270,7 +245,7 @@ void update_send(char** grid, char** next_grid, int* target_cells, MPI_Comm grid
     // Calculate all except borders
     #pragma omp parallel
     {
-        #pragma omp for collapse(2) schedule(guided)
+        #pragma omp for collapse(2) schedule(static)
         for(int y = 1; y < local_H-1; y++)
             for(int x = 0; x < local_W; x++)
                 next_grid[y][x] = next_state(grid,y,x);
@@ -295,7 +270,7 @@ void update_send(char** grid, char** next_grid, int* target_cells, MPI_Comm grid
     // Calculate all borders and update grid
     #pragma omp parallel
     {
-        #pragma omp for collapse(2) schedule(guided)
+        #pragma omp for collapse(2) schedule(static)
         for(int x = 0; x < local_W; x++) {
             for(int count = 0; count < EDGE_LEN; count++) {
                 next_grid[0-count][x] = next_state(grid,0-count,x);
@@ -303,7 +278,7 @@ void update_send(char** grid, char** next_grid, int* target_cells, MPI_Comm grid
             }
         }
 
-        #pragma omp for collapse(2) schedule(guided)
+        #pragma omp for collapse(2) schedule(static)
         for(int y = 0; y < local_H; y++)
             for(int x = 0; x < local_W; x++)
                 grid[y][x] = next_grid[y][x];
@@ -364,7 +339,7 @@ void update_send_blocks(char** grid, char** next_grid, int* target_cells, MPI_Co
     // Calculate all except borders
     #pragma omp parallel
     {
-        #pragma omp for collapse(2) schedule(guided)
+        #pragma omp for collapse(2) schedule(static)
         for(int y = 1; y < local_H-1; y++)
             for(int x = 1; x < local_W-1; x++)
                 next_grid[y][x] = next_state(grid,y,x);
@@ -404,21 +379,21 @@ void update_send_blocks(char** grid, char** next_grid, int* target_cells, MPI_Co
     // Calculate all borders and update grid
     #pragma omp parallel
     {
-        #pragma omp for collapse(2) schedule(guided)
+        #pragma omp for collapse(2) schedule(static)
         for(int x = -EDGE_LEN+1; x < local_W+EDGE_LEN; x++) {
             for(int count = 0; count < EDGE_LEN; count++) {
                 next_grid[0-count][x] = next_state(grid,0-count,x);
                 next_grid[local_H-1+count][x] = next_state(grid,local_H-1+count,x);
             }
         }
-        #pragma omp for collapse(2) schedule(guided)
+        #pragma omp for collapse(2) schedule(static)
         for(int y = 0; y < local_H; y++) {
             for(int count = 0; count < EDGE_LEN; count++) {
                 next_grid[y][0-count] = next_state(grid,y,0-count);
                 next_grid[y][local_H-1+count] = next_state(grid,y,local_H-1+count);
             }
         }
-        #pragma omp for collapse(2) schedule(guided)
+        #pragma omp for collapse(2) schedule(static)
         for(int y = 0; y < local_H; y++)
             for(int x = 0; x < local_W; x++)
                 grid[y][x] = next_grid[y][x];
@@ -465,8 +440,6 @@ int main(int argc, char* argv[]){
         exit(1);
     }
 
-
-
     int num_procs, my_id;
     MPI_Status status;
 
@@ -509,9 +482,9 @@ int main(int argc, char* argv[]){
     if (my_grid_coords[0] < H % dim_sizes[0]) h_size += 1;
     if (dim_sizes[1]-my_grid_coords[1] <= W % dim_sizes[1]) w_size += 1;
 
-    if (my_grid_id == 0) 
+    /*if (my_grid_id == 0) 
         printf("Res:%dx%d | grid: %dx%d | edge: %d | iter: %d\n", W, H, dim_sizes[0], dim_sizes[1], EDGE_LEN, ITER);
-    
+    */
 
     // Initialize local grids
     char** grid = alloc_grid(h_size, w_size, EDGE_LEN, dims == 2 ? EDGE_LEN : 0);
@@ -521,7 +494,7 @@ int main(int argc, char* argv[]){
     local_H = h_size;
     local_W = w_size;    
     proc_seed = my_id;
-    printf("id:%d [%d,%d] | neighb: [%d,%d,%d,%d] | sizes: [%d,%d]\n", my_grid_id, my_grid_coords[0], my_grid_coords[1], my_neigbours[0], my_neigbours[1], my_neigbours[2], my_neigbours[3], local_H, local_W);
+    //printf("id:%d [%d,%d] | neighb: [%d,%d,%d,%d] | sizes: [%d,%d]\n", my_grid_id, my_grid_coords[0], my_grid_coords[1], my_neigbours[0], my_neigbours[1], my_neigbours[2], my_neigbours[3], local_H, local_W);
 
     init(grid, 0.7);
     if (my_id == 0) spark(grid, 10);
@@ -544,9 +517,9 @@ int main(int argc, char* argv[]){
     double t_end = omp_get_wtime();
 
     if (my_grid_id == 0)
-        printf("Elapsed time = %f\n", t_end-t_start);
+        printf("%f\n", t_end-t_start);
 
     MPI_Finalize();
 }
 
-// TO COMPILE: mpicc parallel.c -lm -fopenmp -Wl,-rpath,./ -L./ -l:"libfreeimage.so.3" -o out
+// TO COMPILE: mpicc parallel.c -O2 -lm -fopenmp -o out
