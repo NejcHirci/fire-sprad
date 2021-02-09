@@ -204,7 +204,7 @@ void update_nosend(char** grid, char** next_grid, int exchange, int blocks){
     int eW = blocks ? -EDGE_LEN + 1 + exchange : 0; 
     #pragma omp parallel
     {
-        #pragma omp for collapse(2) schedule(static)
+        #pragma omp for collapse(2) schedule(guided)
         for(int y = eH; y < local_H-eH; y++)
             for(int x = eW; x < local_W-eW; x++)
                 next_grid[y][x] = next_state(grid,y,x);
@@ -245,7 +245,7 @@ void update_send(char** grid, char** next_grid, int* target_cells, MPI_Comm grid
     // Calculate all except borders
     #pragma omp parallel
     {
-        #pragma omp for collapse(2) schedule(static)
+        #pragma omp for collapse(2) schedule(guided)
         for(int y = 1; y < local_H-1; y++)
             for(int x = 0; x < local_W; x++)
                 next_grid[y][x] = next_state(grid,y,x);
@@ -270,7 +270,7 @@ void update_send(char** grid, char** next_grid, int* target_cells, MPI_Comm grid
     // Calculate all borders and update grid
     #pragma omp parallel
     {
-        #pragma omp for collapse(2) schedule(static)
+        #pragma omp for collapse(2) schedule(guided)
         for(int x = 0; x < local_W; x++) {
             for(int count = 0; count < EDGE_LEN; count++) {
                 next_grid[0-count][x] = next_state(grid,0-count,x);
@@ -339,7 +339,7 @@ void update_send_blocks(char** grid, char** next_grid, int* target_cells, MPI_Co
     // Calculate all except borders
     #pragma omp parallel
     {
-        #pragma omp for collapse(2) schedule(static)
+        #pragma omp for collapse(2) schedule(guided)
         for(int y = 1; y < local_H-1; y++)
             for(int x = 1; x < local_W-1; x++)
                 next_grid[y][x] = next_state(grid,y,x);
@@ -379,14 +379,14 @@ void update_send_blocks(char** grid, char** next_grid, int* target_cells, MPI_Co
     // Calculate all borders and update grid
     #pragma omp parallel
     {
-        #pragma omp for collapse(2) schedule(static)
+        #pragma omp for collapse(2) schedule(guided)
         for(int x = -EDGE_LEN+1; x < local_W+EDGE_LEN; x++) {
             for(int count = 0; count < EDGE_LEN; count++) {
                 next_grid[0-count][x] = next_state(grid,0-count,x);
                 next_grid[local_H-1+count][x] = next_state(grid,local_H-1+count,x);
             }
         }
-        #pragma omp for collapse(2) schedule(static)
+        #pragma omp for collapse(2) schedule(guided)
         for(int y = 0; y < local_H; y++) {
             for(int count = 0; count < EDGE_LEN; count++) {
                 next_grid[y][0-count] = next_state(grid,y,0-count);
@@ -417,6 +417,27 @@ int main(int argc, char* argv[]){
         exit(1);
     }
 
+    omp_set_dynamic(0);
+
+    int num_procs, my_id;
+    MPI_Status status;
+
+    // Config variables for Cartesian
+    int dim_sizes[2];
+    int wrap_around[2] = {0,0};
+    int dims;
+    MPI_Comm grid_comm;
+
+    int my_grid_id;
+    int my_grid_coords[2];
+    int my_neigbours[4];
+
+    // ================== MPI ==================
+    // Configure MPI parallelization based on input arguments
+    MPI_Init(&argc, &argv);    
+    MPI_Comm_rank(MPI_COMM_WORLD, &my_id);
+    MPI_Comm_size(MPI_COMM_WORLD, &num_procs);
+
     H = atoi(argv[1]);
     W = atoi(argv[2]);
     EDGE_LEN = atoi(argv[3]);
@@ -439,25 +460,6 @@ int main(int argc, char* argv[]){
         printf("BLOCKS:%d can be only 0 (for rows) or 1 (for blocks)\n", BLOCKS);
         exit(1);
     }
-
-    int num_procs, my_id;
-    MPI_Status status;
-
-    // Config variables for Cartesian
-    int dim_sizes[2];
-    int wrap_around[2] = {0,0};
-    int dims;
-    MPI_Comm grid_comm;
-
-    int my_grid_id;
-    int my_grid_coords[2];
-    int my_neigbours[4];
-
-    // ================== MPI ==================
-    // Configure MPI parallelization based on input arguments
-    MPI_Init(&argc, &argv);    
-    MPI_Comm_rank(MPI_COMM_WORLD, &my_id);
-    MPI_Comm_size(MPI_COMM_WORLD, &num_procs);
     
     // Set grid dimensions
     dims = set_dims(num_procs, dim_sizes);
